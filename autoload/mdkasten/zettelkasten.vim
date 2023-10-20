@@ -185,7 +185,7 @@ endfunction
 function mdkasten#zettelkasten#OpenBacklink()
     let l:filename = expand('%:t')
 	let l:source = "find ".s:MakeFindOptions()." -print0".
-        \ " | xargs -0 grep -sl -E '\\[/?(.+/)*".filename."(\\]|#+ .+\\])'".
+        \ " | xargs -0 grep -sl -E '\\[/?(.+/)*".filename."(#+ .+)?\\]'".
         \ " | cut -c ".(len(s:GetKastenRoot())+1)."-"
 	call fzf#run(fzf#wrap({
         \ 'options': ["--prompt", "MdkOpenBacklink> "],
@@ -235,7 +235,7 @@ function mdkasten#zettelkasten#Rename(newfilename)
 
     " change all kasten links
     let l:findoutput = systemlist("find ".s:MakeFindOptions()." -print0".
-        \ " | xargs -0 grep -so -E '\\[/?(.+/)*".curfilename."(\\]|#+ .+\\])'".
+        \ " | xargs -0 grep -so -E '\\[/?(.+/)*".curfilename."(#+ .+)?\\]'".
         \ " | cut -c ".(len(s:GetKastenRoot())+1)."-")
     for line in findoutput
         let [l:fpath, l:backlink] = split(line, ":")
