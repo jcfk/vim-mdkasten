@@ -1,5 +1,48 @@
 " utils
 
+function s:GetKastenRoot()
+    let l:cwd = split(expand("%:p:h"), "/")
+    let l:i = 1
+    while i <= len(cwd)
+        if isdirectory("/" . join(cwd[:-i], "/") . "/.mdkasten")
+            return "/" . join(cwd[:-i], "/")
+        endif
+        let i += 1
+    endwhile
+    return 0
+endfunction
+
+function s:MakeFindOptions() " listing exactly the zettelkasten files
+    " root
+    let l:root = s:GetKastenRoot()
+    let l:ret = root
+
+    " ignore
+    let l:ignorelist = []
+    for line in readfile(root."/.mdkasten/prune")
+        call add(ignorelist, "-path \"".root."/".line."\"")
+    endfor
+    let l:ret .= " -type d \\( ".join(ignorelist, " -o ")." \\) -prune"
+
+    " iname
+    let l:ret .= " -o -iname '*.md'"
+
+    return ret
+endfunction
+
+function s:ParseLink(link)
+    let l:i = 0
+    while i < strlen(a:link)
+        if a:link[i] == '#'
+            break
+        endif
+        let l:i += 1
+    endwhile
+
+    " [link path, link header]
+    return [a:link[:i-1], a:link[i:]]
+endfunction
+
 function s:GetCursorLink()
 	let l:cursorcol = col('.')-1
 	let l:cursorline = getline('.')
@@ -22,15 +65,7 @@ function s:GetCursorLink()
 	endwhile
 
     let l:link = cursorline[linkstart+1:linkend-1]
-    let l:i = 0
-    while i < strlen(link)
-        if link[i] == '#'
-            break
-        endif
-        let l:i += 1
-    endwhile
-
-    return [link[:i-1], link[i:]]
+    return s:ParseLink(link)
 endfunction
 
 function s:IsValidFilename(filename)
@@ -46,60 +81,81 @@ function s:IsValidFilename(filename)
 endfunction
 
 function s:FileToTitle(link)
-    let l:lowercase_title = substitute(a:link[:-4], "-", " ", "g")
-    return toupper(lowercase_title[0]) . lowercase_title[1:]
+    let l:ret = substitute(split(a:link[:-4], "/")[-1], "-", " ", "g")
+    return toupper(l:ret[0]) . l:ret[1:]
 endfunction
 
 function s:OpenBacklink(currentfilename, filename)
-    silent execute "e" a:filename "| /\\[" . a:currentfilename
+    call s:OpenSearch("\\[\\(.*\\/\\)*".a:currentfilename."\\(#\\|\\]\\)", a:filename)
 endfunction
 
 function s:OpenSearch(query, filename)
-    silent execute "e" a:filename "| /" . a:query
+    silent execute "e" s:GetKastenRoot()."/".a:filename "| /".a:query
+endfunction
+
+function s:OpenSearchRg(line)
+    let l:components = split(a:line, ":")
+    let l:filepath = components[0]
+    let l:linenum = components[1]
+    silent execute "e" s:GetKastenRoot().filepath "| :".linenum
 endfunction
 
 function s:InsertLink(filename)
-    silent execute "normal i[" . a:filename . "]"
+    silent execute "normal i[/" . a:filename . "]"
 endfunction
 
 " actions
 
-function mdkasten#zettelkasten#InsertLink()
-    let l:findcommand = "find . -maxdepth 1 -iname '*.md' -printf '%P\n'"
+function mdkasten#zettelkasten#OpenFile()
+    let l:source = "find ".s:MakeFindOptions()." -printf '%P\n'"
 	call fzf#run(fzf#wrap({
-    \ 'options': '--prompt "MdInsertLink> "',
-	\ 'source': findcommand, 
-	\ 'sink': function("s:InsertLink")
-	\ }))
+        \ 'options': ["--prompt", "MdkOpenFile> "],
+        \ 'source': source, 
+        \ 'sink': "e"
+        \ }))
 endfunction
 
-function mdkasten#zettelkasten#InsertLinkToSelectedTitle() range
-    let [l:bufnum, l:start_lnum, l:start_col, l:off] = getpos("'<")
-    let [l:end_lnum, l:end_col] = getpos("'>")[1:2]
-    if end_col - 1 == len(getline(end_lnum))
-        let l:end_negcol = -1
+function mdkasten#zettelkasten#InsertLink()
+    let l:source = "find ".s:MakeFindOptions()." -printf '%P\n'"
+	call fzf#run(fzf#wrap({
+        \ 'options': ["--prompt", "MdkInsertLink> "],
+        \ 'source': source, 
+        \ 'sink': function("s:InsertLink")
+        \ }))
+endfunction
+
+function mdkasten#zettelkasten#InsertLinkFromSelection() range
+    let [l:bufnum, l:startlnum, l:startcol, l:off] = getpos("'<")
+    let [l:endlnum, l:endcol] = getpos("'>")[1:2]
+    if endcol - 1 == len(getline(endlnum))
+        let l:endnegcol = -1
     else
-        let l:end_negcol = end_col - len(getline(end_lnum)) - 1
+        let l:endnegcol = endcol - len(getline(endlnum)) - 1
     endif
 
-    let l:lines = getline(l:start_lnum, l:end_lnum)
-    let l:lines[0] = l:lines[0][start_col-1:-1]
-    let l:lines[-1] = l:lines[-1][0:end_negcol]
+    let l:lines = getline(l:startlnum, l:endlnum)
+    let l:lines[0] = l:lines[0][startcol-1:-1]
+    let l:lines[-1] = l:lines[-1][0:endnegcol]
 
     let l:name = join(lines)
     let name = tolower(name)
     let name = substitute(name, "\\s", "-", "g")
     let name = substitute(name, "[^0-9A-Za-z\-]", "", "g")
     let l:link = name . ".md"
-    call setpos('.', [bufnum, end_lnum, end_col, off])
+    call setpos('.', [bufnum, endlnum, endcol, off])
     silent execute "normal a [" . link . "]"
 endfunction
 
 function mdkasten#zettelkasten#FollowLink()
     let [l:file, l:header] = s:GetCursorLink()
-    if file == ""
+    if len(file) == 0
         echo "(mdkasten) No link found under cursor."
         return
+    endif
+
+    " kasten-absolute paths
+    if file[0] == "/"
+        let l:file = s:GetKastenRoot() . file
     endif
 
 	" symlinks
@@ -126,49 +182,98 @@ function mdkasten#zettelkasten#FollowLink()
     endif
 endfunction
 
-function mdkasten#zettelkasten#ShowBacklinks()
+function mdkasten#zettelkasten#OpenBacklink()
     let l:filename = expand('%:t')
-
-	let l:grepcommand = "grep -sl -E \"\\[" . filename . "(\\]|#)\" *.md"
+	let l:source = "find ".s:MakeFindOptions()." -print0".
+        \ " | xargs -0 grep -sl -E '\\[/?(.+/)*".filename."(\\]|#+ .+\\])'".
+        \ " | cut -c ".(len(s:GetKastenRoot())+1)."-"
 	call fzf#run(fzf#wrap({
-    \ 'options': '--prompt "MdBacklinks> "',
-	\ 'source': grepcommand, 
-	\ 'sink': function("s:OpenBacklink", [filename])
-	\ }))
+        \ 'options': ["--prompt", "MdkOpenBacklink> "],
+        \ 'source': source, 
+        \ 'sink': function("s:OpenBacklink", [filename])
+        \ }))
 endfunction
 
 function mdkasten#zettelkasten#Search(query)
-	let l:grepcommand = "grep -sli -E \"" . a:query . "\" *.md"
-	call fzf#run(fzf#wrap({
-    \ 'options': '--prompt "MdSearch> "',
-	\ 'source': grepcommand, 
-	\ 'sink': function("s:OpenSearch", [a:query])
-	\ }))
+    if len(a:query)
+        let l:source = "find ".s:MakeFindOptions()." -print0".
+            \ " | xargs -0 grep -sli -E \"".a:query."\"".
+            \ " | sed 's+".s:GetKastenRoot()."++g'"
+        call fzf#run(fzf#wrap({
+            \ 'options': ["--prompt", "MdkSearch> "],
+            \ 'source': source, 
+            \ 'sink': function("s:OpenSearch", [a:query])
+            \ }))
+    else
+        let l:source = "find ".s:MakeFindOptions()." -print0".
+            \ " | xargs -0 rg --line-number --color=always --smart-case ''".
+            \ " | sed 's+".s:GetKastenRoot()."++g'"
+        call fzf#run(fzf#wrap({
+            \ "options": ["--exact", "--color", "hl:9:bold", "--ansi",
+                \ "--prompt", "MdkSearch> ", "--delimiter", ":",
+                \ "--nth", "3.."],
+            \ "source": source,
+            \ "sink": function("s:OpenSearchRg")
+            \ }))
+    endif
 endfunction
 
 function mdkasten#zettelkasten#Rename(newfilename)
-    let l:filename = expand('%:t')
+    let l:root = s:GetKastenRoot()
+    let l:curfilename = expand('%:t')
+    let l:curfilepath = expand('%:p')[len(root):]
 
     " check validity of new title
-    let l:valid = s:IsValidFilename(a:newfilename)
-    if valid == 0
-        echo "(mdkasten) Invalid filename or already exists."
+    if a:newfilename !~ '\v^\S*\.md'
+        echo "(mdkasten) Invalid filename."
+        return
+    endif
+    if filereadable(a:newfilename)
+        echo "(mdkasten) File already exists."
         return
     endif
 
     " change all kasten links
-    let l:findstr = "\\[" . substitute(filename, "\\.", "\\\\.", "g") . "\\]"
-    let l:repstr = a:newfilename
-    silent execute "!sed -i \"s/" . findstr . "/[" . repstr . "]/g\" *.md"
+    let l:findoutput = systemlist("find ".s:MakeFindOptions()." -print0".
+        \ " | xargs -0 grep -so -E '\\[/?(.+/)*".curfilename."(\\]|#+ .+\\])'".
+        \ " | cut -c ".(len(s:GetKastenRoot())+1)."-")
+    for line in findoutput
+        let [l:fpath, l:backlink] = split(line, ":")
+        let [l:backlinkpath, l:backlinkheader] = s:ParseLink(backlink[1:-2])
+
+        if backlinkpath[0] == "/"
+            let l:backlinkpathabs = backlinkpath
+        else
+            let l:backlinkpathabs = "/".systemlist('realpath --relative-base '.root.
+                \ ' "'.root.fnamemodify(fpath, ":h").'/'.backlinkpath.'"')[0]
+        endif
+
+        if backlinkpathabs == curfilepath
+            let l:backlinkpathhead = fnamemodify(backlinkpath, ":h")
+
+            if backlinkpathhead == "."
+                let l:newbacklinkpath = a:newfilename
+            elseif backlinkpathhead == "/"
+                let l:newbacklinkpath = "/".a:newfilename
+            else
+                let l:newbacklinkpath = backlinkpathhead."/".a:newfilename
+            endif
+
+            let l:newbacklink = "[".newbacklinkpath.backlinkheader."]"
+            silent execute "!sed -i 's+\\[".backlink[1:-2]."\\]+".newbacklink."+g' '".
+                \ root.fpath."'"
+        endif
+    endfor
 
     " delete old file
-    execute "w " . a:newfilename
+    execute "w ".a:newfilename
+    silent execute "!rm ".curfilename
     execute "bd"
-    silent execute "!rm " . filename
 
     " open new file
-    execute "e " . a:newfilename
+    execute "e ".a:newfilename
     execute "redraw!"
 
-    echo "(mdkasten) Renamed " . filename . " to " . a:newfilename
+    echo "(mdkasten) Renamed" curfilename "to" a:newfilename
 endfunction
+
