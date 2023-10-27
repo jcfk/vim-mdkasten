@@ -1,33 +1,75 @@
-" utils
+" Utils
 
-function s:GetKastenRoot()
-    let l:cwd = split(expand("%:p:h"), "/")
-    let l:i = 1
-    while i <= len(cwd)
-        if isdirectory("/" . join(cwd[:-i], "/") . "/.mdkasten")
-            return "/" . join(cwd[:-i], "/")
+"" Kasten-wide
+
+function s:GetKastenMeta()
+    let l:fpath = expand("%:p")
+    for kasten in g:mdkasten
+        if fpath =~ '\v^'.kasten["root"].'.*'
+            return kasten
         endif
-        let i += 1
-    endwhile
-    return 0
+    endfor
 endfunction
 
 function s:MakeFindOptions() " listing exactly the zettelkasten files
     " root
-    let l:root = s:GetKastenRoot()
+    let l:kasten = s:GetKastenMeta()
+    let [ l:root, l:prunes ] = [ kasten["root"], kasten["prunes"] ]
     let l:ret = root
 
     " ignore
     let l:ignorelist = []
-    for line in readfile(root."/.mdkasten/prune")
+    for line in prunes
         call add(ignorelist, "-path \"".root."/".line."\"")
     endfor
     let l:ret .= " -type d \\( ".join(ignorelist, " -o ")." \\) -prune"
+    " -type d is needed here because we may have top-level files whose names
+    " match one of the prune patterns. We are skipping just the directories.
 
     " iname
     let l:ret .= " -o -iname '*.md'"
 
+    " echom ret
+    return ret " a print action must be appended at this point
+endfunction
+
+function s:MakeFindGrepPipelines(grepopts)
+    " root
+    let l:kasten = s:GetKastenMeta()
+    let [ l:root, l:priorities ] = [ kasten["root"], kasten["priorities"] ]
+    let l:ret = "{"
+
+    " priorities
+    let l:findinstances = []
+    for line in priorities
+        call add(findinstances, "find ".simplify(root."/".line).
+            \ " -maxdepth 1 -iname '*.md' -print0".
+            \ " | xargs -0 ".a:grepopts)
+    endfor
+    let l:ret .= " ".join(findinstances, " && ")
+
+    " general
+    let l:ret .= " && find ".s:MakeFindOptions()." -print0".
+        \ " | xargs -0 ".a:grepopts." ; }"
+
+    " cutting
+    let l:ret .= " | sed -u 's+".root."++g' | stdbuf -oL awk '!seen[$0]++'"
+
     return ret
+endfunction
+
+"" Local
+
+function s:IsValidFilename(fname)
+    if a:fname !~ '\v^\S*\.md'
+        return 0
+    endif
+
+    if filereadable(a:fname)
+        return 0
+    endif
+
+    return 1
 endfunction
 
 function s:ParseLink(link)
@@ -68,25 +110,19 @@ function s:GetCursorLink()
     return s:ParseLink(link)
 endfunction
 
-function s:IsValidFilename(fname)
-    if a:fname !~ '\v^\S*\.md'
-        return 0
-    endif
-
-    if filereadable(a:fname)
-        return 0
-    endif
-
-    return 1
-endfunction
-
 function s:FileToTitle(link)
     let l:ret = substitute(split(a:link[:-4], "/")[-1], "-", " ", "g")
     return toupper(l:ret[0]) . l:ret[1:]
 endfunction
 
+function s:InsertLink(fpath)
+    silent execute "normal i[" . a:fpath . "]"
+endfunction
+
+"" Handlers
+
 function s:OpenFile(fpath)
-    silent execute "e" s:GetKastenRoot().a:fpath
+    silent execute "e" s:GetKastenMeta()["root"].a:fpath
 endfunction
 
 function s:OpenBacklink(curfname, fpath)
@@ -94,21 +130,17 @@ function s:OpenBacklink(curfname, fpath)
 endfunction
 
 function s:OpenSearch(query, fpath)
-    silent execute "e" s:GetKastenRoot().a:fpath "| /".a:query
+    silent execute "e" s:GetKastenMeta()["root"].a:fpath "| /".a:query
 endfunction
 
 function s:OpenSearchRg(line)
     let l:components = split(a:line, ":")
     let l:fpath = components[0]
     let l:linenum = components[1]
-    silent execute "e" s:GetKastenRoot().fpath "| :".linenum
+    silent execute "e" s:GetKastenMeta()["root"].fpath "| :".linenum
 endfunction
 
-function s:InsertLink(fpath)
-    silent execute "normal i[" . a:fpath . "]"
-endfunction
-
-" actions
+" Actions
 
 function mdkasten#zettelkasten#OpenFile()
     let l:source = "find ".s:MakeFindOptions()." -printf '/%P\n'"
@@ -159,7 +191,7 @@ function mdkasten#zettelkasten#FollowLink()
 
     " kasten-absolute paths
     if fpath[0] == "/"
-        let l:fpath = s:GetKastenRoot().path
+        let l:fpath = s:GetKastenMeta()["root"].path
     endif
 
 	" symlinks
@@ -182,15 +214,14 @@ function mdkasten#zettelkasten#FollowLink()
             echo "(mdkasten) New file created."
         endif
     else
-        execute "!gloom " . fpath
+        execute "!gloom ".fpath
     endif
 endfunction
 
 function mdkasten#zettelkasten#OpenBacklink()
     let l:fname = expand('%:t')
-	let l:source = "find ".s:MakeFindOptions()." -print0".
-        \ " | xargs -0 grep -sl -E '\\[/?(.+/)*".fname."(#+ .+)?\\]'".
-        \ " | cut -c ".(len(s:GetKastenRoot())+1)."-"
+    let l:source = s:MakeFindGrepPipelines("grep -sl -E '\\[/?(.+/)*".fname."(#+ .+)?\\]'")
+    " echom source
 	call fzf#run(fzf#wrap({
         \ 'options': ["--prompt", "MdkOpenBacklink> "],
         \ 'source': source, 
@@ -200,9 +231,7 @@ endfunction
 
 function mdkasten#zettelkasten#Search(query)
     if len(a:query)
-        let l:source = "find ".s:MakeFindOptions()." -print0".
-            \ " | xargs -0 grep -sli -E \"".a:query."\"".
-            \ " | sed 's+".s:GetKastenRoot()."++g'"
+        let l:source = s:MakeFindGrepPipelines("grep -sli -E '".a:query."'")
         call fzf#run(fzf#wrap({
             \ 'options': ["--prompt", "MdkSearch> "],
             \ 'source': source, 
@@ -211,7 +240,7 @@ function mdkasten#zettelkasten#Search(query)
     else
         let l:source = "find ".s:MakeFindOptions()." -print0".
             \ " | xargs -0 rg --line-number --color=always --smart-case ''".
-            \ " | sed 's+".s:GetKastenRoot()."++g'"
+            \ " | sed 's+".s:GetKastenMeta()["root"]."++g'"
         call fzf#run(fzf#wrap({
             \ "options": ["--exact", "--color", "hl:9:bold", "--ansi",
                 \ "--prompt", "MdkSearch> ", "--delimiter", ":",
@@ -223,7 +252,7 @@ function mdkasten#zettelkasten#Search(query)
 endfunction
 
 function mdkasten#zettelkasten#Rename(newfname)
-    let l:root = s:GetKastenRoot()
+    let l:root = s:GetKastenMeta()["root"]
     let l:curfname = expand('%:t')
     let l:curfpath = expand('%:p')[len(root):]
 
@@ -240,7 +269,7 @@ function mdkasten#zettelkasten#Rename(newfname)
     " change all kasten links
     let l:findoutput = systemlist("find ".s:MakeFindOptions()." -print0".
         \ " | xargs -0 grep -so -E '\\[/?(.+/)*".curfname."(#+ .+)?\\]'".
-        \ " | cut -c ".(len(s:GetKastenRoot())+1)."-")
+        \ " | cut -c ".(len(s:GetKastenMeta()["root"])+1)."-")
     for line in findoutput
         let [l:fpath, l:backlink] = split(line, ":")
         let [l:backlinkpath, l:backlinkheader] = s:ParseLink(backlink[1:-2])
