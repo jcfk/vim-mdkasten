@@ -191,7 +191,7 @@ function mdkasten#zettelkasten#FollowLink()
 
     " kasten-absolute paths
     if fpath[0] == "/"
-        let l:fpath = s:GetKastenMeta()["root"].path
+        let l:fpath = s:GetKastenMeta()["root"].fpath
     endif
 
 	" symlinks
