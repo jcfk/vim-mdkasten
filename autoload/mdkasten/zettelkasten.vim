@@ -19,8 +19,8 @@ function s:MakeFindOptions() " listing exactly the zettelkasten files
 
     " ignore
     let l:ignorelist = []
-    for line in prunes
-        call add(ignorelist, "-path \"".root."/".line."\"")
+    for prune in prunes
+        call add(ignorelist, "-path \"".root.prune."\"")
     endfor
     let l:ret .= " -type d \\( ".join(ignorelist, " -o ")." \\) -prune"
     " -type d is needed here because we may have top-level files whose names
@@ -41,8 +41,8 @@ function s:MakeFindGrepPipelines(grepopts)
 
     " priorities
     let l:findinstances = []
-    for line in priorities
-        call add(findinstances, "find ".simplify(root."/".line).
+    for priority in priorities
+        call add(findinstances, "find ".simplify(root.priority).
             \ " -maxdepth 1 -iname '*.md' -print0".
             \ " | xargs -0 ".a:grepopts)
     endfor

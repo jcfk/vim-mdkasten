@@ -16,13 +16,24 @@ Requirements:
 
 ## Quick intro
 
-Create a dir named `.mdkasten` in the directory `/path/to/kasten`
-containing the markdown files. Directory `/path/to/kasten` becomes the
-*zettelkasten root directory*. All markdown files beneath this point
-become *zettelkasten files*.
+Write the global `g:mdkasten` in your vimrc:
 
-Inside any markdown file `/path/to/kasten/file1.md`, you can include
-**relative links**:
+    let g:mdkasten = [
+        {
+            "root": "/path/to/kasten",
+            "prunes": ["/paths", "/to", "/ignore"],
+            "priorities": ["/paths", "/to", "/search/first", "/"]
+        }
+    ]
+
+Each element of this list is the metadata for one zettelkasten
+instance. The *zettelkasten root directory* is the location of the
+zettellkasten. Markdown files under this point and not in a pruned
+directory are called *zettelkasten files*. See "search" for info on
+priorities.
+
+Inside any zettelkasten file `/path/to/kasten/file1.md`, you can
+include **relative links**:
 
     # Contents of `/path/to/kasten/file1.md`
 
@@ -41,7 +52,7 @@ the current file.
 
 ### Zettelkasten files
 
-**Open a zettelkasten file** via an fzf interface with `:MdkOpenFile`.
+**List all zettelkasten files** via an fzf interface with `:MdkOpenFile`.
 
 ### Links
 
@@ -72,6 +83,12 @@ provided, an fzf interface is created containing the output of `grep
 If an argument is not provided, an fzf dialog is given containing the
 line-by-line contents of all zettelkasten files, allowing interactive
 search via fzf (like `fzf.vim`'s `:Rg`).
+
+#### Search priorities
+
+With a large directory tree, `find`ing all zettelkasten files can take
+a while. To prioritize grepping through the immediate children of a
+certain directory, add it to the `g:mdkasten` priorities list.
 
 ### Rename
 
