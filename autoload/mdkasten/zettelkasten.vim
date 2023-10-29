@@ -116,7 +116,7 @@ function s:FileToTitle(link)
 endfunction
 
 function s:InsertLink(fpath)
-    silent execute "normal i[" . a:fpath . "]"
+    silent execute "normal a[" . a:fpath . "]"
 endfunction
 
 "" Handlers
