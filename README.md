@@ -29,8 +29,7 @@ Write the global `g:mdkasten` in your vimrc:
 Each element of this list is the metadata for one zettelkasten
 instance. The *zettelkasten root directory* is the location of the
 zettellkasten. Markdown files under this point and not in a pruned
-directory are called *zettelkasten files*. See "search" for info on
-priorities.
+directory are called *zettelkasten files*.
 
 Inside any zettelkasten file `/path/to/kasten/file1.md`, you can
 include **relative links**:
